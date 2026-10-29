@@ -221,6 +221,26 @@ def ficha_serie(codigo: str) -> str:
     return json.dumps(_ficha(codigo), ensure_ascii=False, indent=2)
 
 
+# Un recurso fijo, sin {codigo}: es el que aparece en el menú de @ de Claude Code (las plantillas no aparecen).
+DESTACADAS = {  # el indicador y el código de su serie, que Claude necesita para pedir los datos
+    "Inflación a 12 meses (Lima)": "PN01273PM",
+    "Inflación mensual (Lima)": "PN01271PM",
+    "Tipo de cambio interbancario, venta (diario)": "PD04638PD",
+    "Tasa de referencia del BCRP": "PD04722MM",
+    "Reservas internacionales netas": "PN00027MM",
+    "Precio del cobre": "PN38784BM",
+    "Crecimiento del PBI (anual)": "PM04923AA",
+}
+
+
+@mcp.resource("bcrp://series/destacadas", mime_type="application/json")
+def series_destacadas() -> str:
+    """Las fichas de las series del BCRP más consultadas: inflación a 12 meses y mensual, tipo de cambio,
+    tasa de referencia, reservas internacionales netas, precio del cobre y crecimiento del PBI."""
+    fichas = {indicador: _ficha(codigo) for indicador, codigo in DESTACADAS.items()}
+    return json.dumps(fichas, ensure_ascii=False, indent=2)
+
+
 # TODO 5 · Prompt: un informe que cita el código y el periodo de cada cifra. En Claude Code: /mcp__bcrp__informe inflación
 @mcp.prompt
 def informe(tema: str) -> str:
