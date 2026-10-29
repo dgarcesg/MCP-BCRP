@@ -6,6 +6,7 @@
 
 Las cuentas las hace Python, no el modelo: así cada cifra sale de una llamada que se puede repetir.
 """
+import json
 import re
 import time
 import unicodedata
@@ -143,7 +144,7 @@ def serie(codigo: str, desde: str, hasta: str) -> dict:
 
     Las fechas siguen la frecuencia de la serie: "2026-10-15" (diaria), "2025-01" (mensual), "2025-T1" (trimestral)
     o "2025" (anual). Devuelve el nombre, la frecuencia, los datos como [{"periodo", "valor"}] (sin los periodos
-    sin dato) y la URL de la fuente, que hay que citar.
+    sin dato) y la URL de la fuente, que hay que citar. Para variaciones, promedios o extremos usen resumen.
     """
     ficha = _ficha(codigo)
     frecuencia = ficha["frecuencia"]
@@ -152,18 +153,86 @@ def serie(codigo: str, desde: str, hasta: str) -> dict:
              for p in _descargar(url) if p["values"][0] != "n.d."]
     return {"codigo": codigo, "nombre": ficha["nombre"], "frecuencia": frecuencia, "datos": datos, "fuente": url}
 
-# TODO 2 · resumen(codigo, desde, hasta): primero, ultimo, cambio, variacion_pct, promedio, maximo y minimo
-#   (los tres últimos con su periodo). Úsenla para que el modelo nunca haga cuentas a mano.
+# TODO 2 · resumen: las cuentas las hace Python, a partir de serie, para que el modelo nunca calcule a mano.
+@mcp.tool(annotations=SOLO_LECTURA)
+def resumen(codigo: str, desde: str, hasta: str) -> dict:
+    """Las cuentas de una serie del BCRP entre dos fechas, ya hechas: primer y último dato, cambio, variación
+    porcentual, promedio, máximo y mínimo (los datos con su periodo). Úsenla siempre que la pregunta pida una
+    variación, un promedio o un extremo, en vez de calcularlos a mano.
 
-# TODO 3 · Una herramienta suya, bien descrita. Ideas:
-#   - comparar_paises con la API del Banco Mundial, que tampoco pide clave:
-#     https://api.worldbank.org/v2/country/PER;CHL;COL/indicator/NY.GDP.MKTP.KD.ZG?format=json&date=2015:2025
-#   - correlacion(codigo_a, codigo_b, desde, hasta)
-#   - grafico(codigo, desde, hasta) que guarde un PNG en salidas/ y devuelva la ruta
+    Las fechas se escriben como en serie: "2026-10-15" (diaria), "2025-01" (mensual), "2025-T1" (trimestral) o
+    "2025" (anual). cambio va en la unidad de la serie: si la serie ya es un porcentaje (como la inflación),
+    cambio son puntos porcentuales y variacion_pct es la variación de esa tasa, que casi nunca es lo que se pregunta.
+    """
+    s = serie(codigo, desde, hasta)
+    datos = s["datos"]
+    if not datos:
+        raise ToolError(f"La serie {codigo} no tiene datos entre {desde} y {hasta}.")
+    primero, ultimo = datos[0], datos[-1]
+    valores = [d["valor"] for d in datos]
+    cambio = ultimo["valor"] - primero["valor"]
+    return {"codigo": codigo, "nombre": s["nombre"], "frecuencia": s["frecuencia"], "n_datos": len(datos),
+            "primero": primero, "ultimo": ultimo, "cambio": round(cambio, 4),
+            # abs: si el primer valor es negativo, el signo sigue diciendo si la serie subió o bajó
+            "variacion_pct": round(100 * cambio / abs(primero["valor"]), 2) if primero["valor"] else None,
+            "promedio": round(sum(valores) / len(valores), 4),
+            "maximo": max(datos, key=lambda d: d["valor"]),
+            "minimo": min(datos, key=lambda d: d["valor"]),
+            "fuente": s["fuente"]}
 
-# TODO 4 · Un recurso, por ejemplo la plantilla bcrp://serie/{codigo} con la ficha de la serie.
+# TODO 3 · comparar_paises: el Perú frente a otros países, con la API del Banco Mundial (tampoco pide clave).
+BANCO_MUNDIAL = "https://api.worldbank.org/v2/country"
 
-# TODO 5 · Un prompt, por ejemplo informe(tema) que pida citar el código y el periodo de cada cifra.
+
+@mcp.tool(annotations=SOLO_LECTURA)
+def comparar_paises(paises: str = "PER;CHL;COL", indicador: str = "NY.GDP.MKTP.KD.ZG",
+                    desde: int = 2015, hasta: int = 2025) -> dict:
+    """Compara al Perú con otros países con datos anuales del Banco Mundial, que el BCRP no publica. Úsenla para
+    preguntas como "¿creció más el Perú que Chile?" o "¿cómo está la inflación del Perú frente a la región?".
+
+    paises: códigos ISO de 3 letras separados por ";", por ejemplo "PER;CHL;COL;MEX;BRA".
+    indicador: código del Banco Mundial. Los más usados: "NY.GDP.MKTP.KD.ZG" (crecimiento del PBI real, %),
+    "FP.CPI.TOTL.ZG" (inflación anual, %), "SL.UEM.TOTL.ZS" (desempleo, % de la fuerza laboral),
+    "NY.GDP.PCAP.CD" (PBI per cápita, US$ corrientes) y "NE.EXP.GNFS.ZS" (exportaciones, % del PBI).
+    Devuelve, por país, el valor de cada año y el promedio del periodo, y la URL de la fuente. Para cifras del
+    Perú de fuente oficial peruana usen serie o resumen.
+    """
+    codigos = paises.upper().replace(",", ";").replace(" ", "")
+    url = f"{BANCO_MUNDIAL}/{codigos}/indicator/{indicador}?format=json&date={desde}:{hasta}&per_page=1000"
+    respuesta = httpx.get(url, timeout=60).json()
+    filas = respuesta[1] if len(respuesta) > 1 and respuesta[1] else []  # si hay un error, solo llega un aviso
+    por_pais = {}
+    for fila in sorted(filas, key=lambda f: f["date"]):  # llegan del año más reciente al más antiguo
+        if fila["value"] is not None:
+            por_pais.setdefault(fila["country"]["value"], []).append(
+                {"anio": int(fila["date"]), "valor": round(fila["value"], 4)})
+    if not por_pais:
+        raise ToolError(f"El Banco Mundial no tiene datos de {indicador!r} para {paises!r} entre {desde} y {hasta}. "
+                        "Revisen los códigos: países como 'PER;CHL;COL' e indicadores como 'NY.GDP.MKTP.KD.ZG'.")
+    return {"indicador": filas[0]["indicator"]["value"],
+            "paises": {pais: {"datos": datos, "promedio": round(sum(d["valor"] for d in datos) / len(datos), 4)}
+                       for pais, datos in por_pais.items()},
+            "fuente": url}
+
+# TODO 4 · Recurso: la ficha de una serie. En Claude Code se adjunta con @bcrp:bcrp://serie/PN01273PM
+@mcp.resource("bcrp://serie/{codigo}", mime_type="application/json")
+def ficha_serie(codigo: str) -> str:
+    """La ficha de una serie del BCRP: nombre, categoría, frecuencia, desde cuándo hay datos y última actualización."""
+    return json.dumps(_ficha(codigo), ensure_ascii=False, indent=2)
+
+
+# TODO 5 · Prompt: un informe que cita el código y el periodo de cada cifra. En Claude Code: /mcp__bcrp__informe inflación
+@mcp.prompt
+def informe(tema: str) -> str:
+    """Un informe breve sobre un tema de la economía peruana, con cada cifra sacada del BCRP y citada."""
+    return (f"Escribe un informe breve sobre {tema} en el Perú con datos oficiales del BCRP. Usa los últimos 12 meses "
+            "disponibles, salvo que el tema pida otro periodo.\n"
+            "1. Busca las series que correspondan con buscar_series.\n"
+            "2. Saca las cifras con resumen (variaciones, promedios y extremos) o con serie (datos puntuales). "
+            "No calcules nada a mano.\n"
+            "3. Si ayuda compararlo con otros países, usa comparar_paises.\n"
+            "4. Cita cada cifra con el código de la serie y el periodo, por ejemplo: 4.55 % (PN01273PM, 2026-09).\n"
+            "5. Termina con la lista de fuentes (URL) y di qué no encontraste, en vez de estimarlo.")
 
 
 if __name__ == "__main__":
