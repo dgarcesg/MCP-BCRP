@@ -32,7 +32,7 @@ def preguntar(pregunta, modo, modelo):
     cmd = ["claude", "-p", INSTRUCCION + pregunta, "--output-format", "json", "--json-schema", json.dumps(ESQUEMA),
            "--no-session-persistence", "--model", modelo, *MODOS[modo]]
     t = time.time()
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600, cwd=AQUI)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=600, cwd=AQUI)
     try:
         salida = json.loads(proc.stdout)
     except json.JSONDecodeError:
