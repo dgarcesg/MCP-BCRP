@@ -1,8 +1,9 @@
-"""Servidor MCP del BCRP. Empiecen aquí: buscar_series ya funciona; completen los TODO hasta que pasen las pruebas.
+"""Servidor MCP del BCRP: busca entre las series oficiales del Banco Central de Reserva del Perú, descarga sus datos y
+hace las cuentas (variaciones, promedios, extremos). También compara al Perú con otros países con el Banco Mundial.
 
-    uv run pytest                                           # el contrato: las 8 pruebas deben pasar
+    uv run pytest                                           # el contrato: las 8 pruebas pasan
     uv run server.py                                        # el servidor, por stdio
-    claude mcp add --scope project bcrp -- uv run server.py # conectarlo a Claude Code
+    claude mcp add --scope project bcrp -- uv run server.py # conectarlo a Claude Code (ya está en .mcp.json)
 
 Las cuentas las hace Python, no el modelo: así cada cifra sale de una llamada que se puede repetir.
 """
